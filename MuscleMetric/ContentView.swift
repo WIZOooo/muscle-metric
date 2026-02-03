@@ -1,24 +1,30 @@
-//
-//  ContentView.swift
-//  MuscleMetric
-//
-//  Created by iMac on 2026/1/30.
-//
-
 import SwiftUI
+import CoreData
 
 struct ContentView: View {
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        TabView {
+            TrainingRecordListView()
+                .tabItem {
+                    Label("力训", systemImage: "dumbbell")
+                }
+            
+            DietRecordListView()
+                .tabItem {
+                    Label("饮食", systemImage: "fork.knife")
+                }
+            
+            TagManagerView()
+                .tabItem {
+                    Label("标签管理", systemImage: "tag")
+                }
         }
-        .padding()
     }
 }
 
-#Preview {
-    ContentView()
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+            .environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
+    }
 }

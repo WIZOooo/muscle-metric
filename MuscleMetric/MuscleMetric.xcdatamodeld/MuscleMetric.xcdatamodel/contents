@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="1" systemVersion="1" minimumToolsVersion="Automatic" sourceLanguage="Swift" userDefinedModelVersionIdentifier="">
+    <entity name="DietEntry" representedClassName="DietEntry" syncable="YES">
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="orderIndex" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="foodTag" optional="YES" minCount="1" maxCount="1" deletionRule="Nullify" destinationEntity="DietTag" inverseName="entries" inverseEntity="DietTag"/>
+        <relationship name="record" optional="YES" minCount="1" maxCount="1" deletionRule="Nullify" destinationEntity="DietRecord" inverseName="entries" inverseEntity="DietRecord"/>
+    </entity>
+    <entity name="DietRecord" representedClassName="DietRecord" syncable="YES">
+        <attribute name="date" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="title" optional="YES" attributeType="String"/>
+        <relationship name="entries" optional="YES" minCount="0" maxCount="0" deletionRule="Cascade" destinationEntity="DietEntry" inverseName="record" inverseEntity="DietEntry"/>
+    </entity>
+    <entity name="DietTag" representedClassName="DietTag" syncable="YES">
+        <attribute name="calories" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="carbs" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="fat" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="name" optional="YES" attributeType="String"/>
+        <attribute name="protein" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <relationship name="entries" optional="YES" minCount="0" maxCount="0" deletionRule="Nullify" destinationEntity="DietEntry" inverseName="foodTag" inverseEntity="DietEntry"/>
+    </entity>
+    <entity name="TrainingEntry" representedClassName="TrainingEntry" syncable="YES">
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="orderIndex" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="actionTag" optional="YES" minCount="1" maxCount="1" deletionRule="Nullify" destinationEntity="TrainingTag" inverseName="actionEntries" inverseEntity="TrainingTag"/>
+        <relationship name="record" optional="YES" minCount="1" maxCount="1" deletionRule="Nullify" destinationEntity="TrainingRecord" inverseName="entries" inverseEntity="TrainingRecord"/>
+        <relationship name="weightTag" optional="YES" minCount="1" maxCount="1" deletionRule="Nullify" destinationEntity="TrainingTag" inverseName="weightEntries" inverseEntity="TrainingTag"/>
+    </entity>
+    <entity name="TrainingRecord" representedClassName="TrainingRecord" syncable="YES">
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="timestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="title" optional="YES" attributeType="String"/>
+        <relationship name="entries" optional="YES" minCount="0" maxCount="0" deletionRule="Cascade" destinationEntity="TrainingEntry" inverseName="record" inverseEntity="TrainingEntry"/>
+        <relationship name="gymTag" optional="YES" minCount="1" maxCount="1" deletionRule="Nullify" destinationEntity="TrainingTag" inverseName="gymRecord" inverseEntity="TrainingTag"/>
+    </entity>
+    <entity name="TrainingTag" representedClassName="TrainingTag" syncable="YES">
+        <attribute name="category" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="level" optional="YES" attributeType="Integer 16" defaultValueString="1" usesScalarValueType="YES"/>
+        <attribute name="name" optional="YES" attributeType="String"/>
+        <relationship name="actionEntries" optional="YES" minCount="0" maxCount="0" deletionRule="Nullify" destinationEntity="TrainingEntry" inverseName="actionTag" inverseEntity="TrainingEntry"/>
+        <relationship name="children" optional="YES" minCount="0" maxCount="0" deletionRule="Cascade" destinationEntity="TrainingTag" inverseName="parent" inverseEntity="TrainingTag"/>
+        <relationship name="gymRecord" optional="YES" minCount="0" maxCount="0" deletionRule="Nullify" destinationEntity="TrainingRecord" inverseName="gymTag" inverseEntity="TrainingRecord"/>
+        <relationship name="parent" optional="YES" minCount="1" maxCount="1" deletionRule="Nullify" destinationEntity="TrainingTag" inverseName="children" inverseEntity="TrainingTag"/>
+        <relationship name="weightEntries" optional="YES" minCount="0" maxCount="0" deletionRule="Nullify" destinationEntity="TrainingEntry" inverseName="weightTag" inverseEntity="TrainingEntry"/>
+    </entity>
+</model>
