@@ -159,6 +159,7 @@ struct AddTrainingRecordView: View {
 }
 
 struct AddEntrySheet: View {
+    @Environment(\.managedObjectContext) private var viewContext
     @Environment(\.dismiss) private var dismiss
     var gym: TrainingTag
     var initialAction: TrainingTag? = nil
@@ -166,6 +167,7 @@ struct AddEntrySheet: View {
     
     @State private var selectedAction: TrainingTag?
     @State private var selectedWeight: TrainingTag?
+    @State private var lastRecordInfo: String = ""
     
     var body: some View {
         NavigationView {
@@ -175,7 +177,7 @@ struct AddEntrySheet: View {
                 }
                 
                 if let action = selectedAction {
-                    Section(header: Text("选择重量")) {
+                    Section(header: Text("选择重量"), footer: Text(lastRecordInfo).font(.caption).foregroundColor(.secondary)) {
                         WeightPicker(parent: action, selection: $selectedWeight)
                     }
                 }
@@ -200,7 +202,58 @@ struct AddEntrySheet: View {
             if let initial = initialAction, selectedAction == nil {
                 selectedAction = initial
             }
+            updateLastRecordInfo()
         }
+        .onChange(of: selectedAction) { _ in
+            updateLastRecordInfo()
+        }
+    }
+    
+    private func updateLastRecordInfo() {
+        guard let action = selectedAction else {
+            lastRecordInfo = ""
+            return
+        }
+        
+        let request = NSFetchRequest<TrainingRecord>(entityName: "TrainingRecord")
+        request.predicate = NSPredicate(format: "gymTag == %@ AND SUBQUERY(entries, $e, $e.actionTag == %@).@count > 0", gym, action)
+        request.sortDescriptors = [NSSortDescriptor(keyPath: \TrainingRecord.timestamp, ascending: false)]
+        request.fetchLimit = 1
+        
+        do {
+            let records = try viewContext.fetch(request)
+            if let lastRecord = records.first, let entries = lastRecord.entries as? Set<TrainingEntry> {
+                // Filter entries for this action
+                let actionEntries = entries.filter { $0.actionTag == action }
+                
+                // Find max weight
+                let maxEntry = actionEntries.max { a, b in
+                    let weightA = parseWeight(a.weightTag?.name)
+                    let weightB = parseWeight(b.weightTag?.name)
+                    return weightA < weightB
+                }
+                
+                if let maxEntry = maxEntry, let weightName = maxEntry.weightTag?.name, let date = lastRecord.timestamp {
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "yyyy/MM/dd"
+                    let dateString = formatter.string(from: date)
+                    lastRecordInfo = "\(dateString) 最大重量为\(weightName)"
+                } else {
+                    lastRecordInfo = ""
+                }
+            } else {
+                lastRecordInfo = ""
+            }
+        } catch {
+            print("Error fetching last record: \(error)")
+            lastRecordInfo = ""
+        }
+    }
+    
+    private func parseWeight(_ name: String?) -> Double {
+        guard let name = name else { return 0 }
+        let numberString = name.filter { "0123456789.".contains($0) }
+        return Double(numberString) ?? 0
     }
 }
 

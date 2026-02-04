@@ -9,9 +9,13 @@ struct TrainingRecordDetailView: View {
     @State private var editingEntry: TrainingEntry?
     
     // State for toggling categories
+    @State private var isBasicInfoExpanded = false
     @State private var expandedCategories: Set<String> = []
     @State private var expandedActions: Set<UUID> = []
     
+    // State for navigation
+    @State private var selectedActionForDetail: TrainingTag?
+
     // Shortcut sheet state
     @State private var showCreateActionSheet = false
     @State private var newActionName = ""
@@ -62,8 +66,12 @@ struct TrainingRecordDetailView: View {
                 }
             }
             
-            // Sort actions by name
-            actions.sort { ($0.tag.name ?? "") < ($1.tag.name ?? "") }
+            // Sort actions by the order of their latest entry (descending)
+            actions.sort { a, b in
+                let maxOrderA = a.entries.map { $0.orderIndex }.max() ?? 0
+                let maxOrderB = b.entries.map { $0.orderIndex }.max() ?? 0
+                return maxOrderA > maxOrderB
+            }
             
             categories.append(GroupedCategory(id: categoryName, name: categoryName, actions: actions))
         }
@@ -76,34 +84,49 @@ struct TrainingRecordDetailView: View {
     
     var body: some View {
         List {
-            Section(header: Text("基本信息")) {
-                HStack {
-                    Text("标题")
-                    Spacer()
-                    TextField("标题", text: Binding(
-                        get: { record.title ?? "" },
-                        set: { 
-                            record.title = $0
-                            saveContext()
-                        }
-                    ))
-                    .multilineTextAlignment(.trailing)
-                }
-                HStack {
-                    Text("时间")
-                    Spacer()
-                    Text("\(record.timestamp ?? Date(), formatter: itemFormatter)")
-                }
-                if let gym = record.gymTag {
+            Section {
+                DisclosureGroup(isExpanded: $isBasicInfoExpanded) {
                     HStack {
-                        Text("门店")
+                        Text("标题")
                         Spacer()
-                        Text(gym.name ?? "")
+                        TextField("标题", text: Binding(
+                            get: { record.title ?? "" },
+                            set: { 
+                                record.title = $0
+                                saveContext()
+                            }
+                        ))
+                        .multilineTextAlignment(.trailing)
                     }
+                    HStack {
+                        Text("时间")
+                        Spacer()
+                        Text("\(record.timestamp ?? Date(), formatter: itemFormatter)")
+                    }
+                    if let gym = record.gymTag {
+                        HStack {
+                            Text("门店")
+                            Spacer()
+                            Text(gym.name ?? "")
+                        }
+                    }
+                } label: {
+                    Text("基本信息")
+                        .font(.headline)
+                        .foregroundColor(.primary)
                 }
             }
             
-            Section(header: Text("训练内容")) {
+            Section(header: HStack {
+                Text("训练内容")
+                Spacer()
+                Button("全部折叠") {
+                    expandedCategories.removeAll()
+                    expandedActions.removeAll()
+                }
+                .font(.caption)
+                .foregroundColor(.blue)
+            }) {
                 if groupedData.isEmpty {
                     Text("无记录")
                 } else {
@@ -151,11 +174,12 @@ struct TrainingRecordDetailView: View {
                                 } label: {
                                     HStack {
                                         // Link to TrainingTagListView (Level 3 - Weights)
-                                        NavigationLink(destination: TrainingTagListView(parentTag: actionGroup.tag)) {
-                                            Text(actionGroup.tag.name ?? "未知动作")
-                                                .font(.headline)
-                                                .foregroundColor(.primary)
-                                        }
+                                        Text(actionGroup.tag.name ?? "未知动作")
+                                            .font(.headline)
+                                            .foregroundColor(.blue)
+                                            .onTapGesture {
+                                                selectedActionForDetail = actionGroup.tag
+                                            }
                                         Spacer()
                                         // Quick add button
                                         Button(action: {
@@ -165,13 +189,14 @@ struct TrainingRecordDetailView: View {
                                                 .foregroundColor(.blue)
                                         }
                                         .buttonStyle(.borderless)
+                                        .padding(.trailing, 20)
                                     }
                                 }
                             }
                         } label: {
                             Text(category.name)
                                 .font(.headline)
-                                .foregroundColor(.blue)
+                                .foregroundColor(.primary)
                         }
                     }
                 }
@@ -261,6 +286,15 @@ struct TrainingRecordDetailView: View {
                 Text("错误：无法获取门店信息")
             }
         }
+        .background(
+            NavigationLink(
+                destination: TrainingTagListView(parentTag: selectedActionForDetail ?? TrainingTag()),
+                isActive: Binding(
+                    get: { selectedActionForDetail != nil },
+                    set: { if !$0 { selectedActionForDetail = nil } }
+                )
+            ) { EmptyView() }
+        )
         .onAppear {
             // Expand all by default
             let categories = groupedData
