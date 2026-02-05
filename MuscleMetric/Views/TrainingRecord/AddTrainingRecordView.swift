@@ -257,6 +257,67 @@ struct AddEntrySheet: View {
     }
 }
 
+struct ActionSelectionListView: View {
+    let actions: [TrainingTag]
+    @Binding var selection: TrainingTag?
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var expandedCategories: Set<String> = []
+
+    var groupedActions: [String: [TrainingTag]] {
+        Dictionary(grouping: actions) { $0.category ?? "未分类" }
+    }
+    
+    var sortedCategories: [String] {
+        groupedActions.keys.sorted()
+    }
+    
+    var body: some View {
+        List {
+            ForEach(sortedCategories, id: \.self) { category in
+                DisclosureGroup(
+                    isExpanded: Binding(
+                        get: { expandedCategories.contains(category) },
+                        set: { isExpanded in
+                            if isExpanded {
+                                expandedCategories.insert(category)
+                            } else {
+                                expandedCategories.remove(category)
+                            }
+                        }
+                    ),
+                    content: {
+                        ForEach(groupedActions[category] ?? []) { action in
+                            Button(action: {
+                                selection = action
+                                dismiss()
+                            }) {
+                                HStack {
+                                    Text(action.name ?? "")
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    if selection == action {
+                                        Image(systemName: "checkmark")
+                                            .foregroundColor(.blue)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    },
+                    label: {
+                        Text(category)
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                    }
+                )
+            }
+        }
+        .navigationTitle("选择动作")
+    }
+}
+
 struct ActionPicker: View {
     var parent: TrainingTag
     @Binding var selection: TrainingTag?
@@ -277,17 +338,16 @@ struct ActionPicker: View {
     }
     
     var body: some View {
-        Picker("动作", selection: $selection) {
-            Text("请选择").tag(nil as TrainingTag?)
-            
-            let grouped = Dictionary(grouping: actions) { $0.category ?? "未分类" }
-            let sortedKeys = grouped.keys.sorted()
-            
-            ForEach(sortedKeys, id: \.self) { category in
-                Section(header: Text(category)) {
-                    ForEach(grouped[category] ?? []) { action in
-                        Text(action.name ?? "").tag(action as TrainingTag?)
-                    }
+        NavigationLink(destination: ActionSelectionListView(actions: Array(actions), selection: $selection)) {
+            HStack {
+                Text("动作")
+                Spacer()
+                if let selected = selection {
+                    Text(selected.name ?? "")
+                        .foregroundColor(.primary)
+                } else {
+                    Text("请选择")
+                        .foregroundColor(.secondary)
                 }
             }
         }

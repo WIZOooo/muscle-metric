@@ -1,5 +1,12 @@
 import SwiftUI
 import CoreData
+import UIKit
+
+struct SelectedFoodItem: Identifiable {
+    let id = UUID()
+    let food: DietTag
+    var portion: Double
+}
 
 struct AddDietRecordView: View {
     @Environment(\.managedObjectContext) private var viewContext
@@ -7,7 +14,7 @@ struct AddDietRecordView: View {
     
     @State private var title: String = ""
     @State private var date = Date()
-    @State private var selectedFoods: [DietTag] = []
+    @State private var selectedFoods: [SelectedFoodItem] = []
     @State private var showFoodPicker = false
     
     var body: some View {
@@ -25,11 +32,16 @@ struct AddDietRecordView: View {
                     }
                     
                     Section(header: Text("已选食物")) {
-                        ForEach(selectedFoods) { food in
+                        ForEach(selectedFoods) { item in
                             HStack {
-                                Text(food.name ?? "未知")
+                                VStack(alignment: .leading) {
+                                    Text(item.food.name ?? "未知")
+                                    Text("份数: \(String(format: "%.1f", item.portion))")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
                                 Spacer()
-                                Text("\(Int(food.calories)) kcal")
+                                Text("\(Int(item.food.calories * item.portion)) kcal")
                                     .foregroundColor(.secondary)
                             }
                         }
@@ -71,11 +83,12 @@ struct AddDietRecordView: View {
         newRecord.date = date
         newRecord.title = title.isEmpty ? dateFormatter.string(from: date) : title
         
-        for (index, food) in selectedFoods.enumerated() {
+        for (index, item) in selectedFoods.enumerated() {
             let entry = DietEntry(context: viewContext)
             entry.id = UUID()
             entry.orderIndex = Int32(index)
-            entry.foodTag = food
+            entry.foodTag = item.food
+            entry.portion = item.portion
             entry.record = newRecord
         }
         
@@ -88,17 +101,25 @@ struct AddDietRecordView: View {
 }
 
 struct DietSummaryView: View {
-    var foods: [DietTag]
+    var foods: [SelectedFoodItem]
+    var bmr: Double? = nil
+    var activeEnergy: Double? = nil
     
-    var totalCalories: Double { foods.reduce(0) { $0 + $1.calories } }
-    var totalProtein: Double { foods.reduce(0) { $0 + $1.protein } }
-    var totalCarbs: Double { foods.reduce(0) { $0 + $1.carbs } }
-    var totalFat: Double { foods.reduce(0) { $0 + $1.fat } }
+    var totalCalories: Double { foods.reduce(0) { $0 + ($1.food.calories * $1.portion) } }
+    var totalProtein: Double { foods.reduce(0) { $0 + ($1.food.protein * $1.portion) } }
+    var totalCarbs: Double { foods.reduce(0) { $0 + ($1.food.carbs * $1.portion) } }
+    var totalFat: Double { foods.reduce(0) { $0 + ($1.food.fat * $1.portion) } }
+    
+    var calorieDeficit: Double? {
+        guard let bmr = bmr, let activeEnergy = activeEnergy else { return nil }
+        return (bmr + activeEnergy) - totalCalories
+    }
     
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 15) {
             Text("当日概要")
                 .font(.headline)
+            
             HStack {
                 SummaryItem(title: "热量", value: totalCalories, unit: "kcal")
                 Divider()
@@ -109,7 +130,22 @@ struct DietSummaryView: View {
                 SummaryItem(title: "脂肪", value: totalFat, unit: "g")
             }
             .fixedSize(horizontal: false, vertical: true)
+            
+            if let deficit = calorieDeficit {
+                Divider()
+                HStack {
+                    Text("热量缺口")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("\(Int(deficit)) kcal")
+                        .font(.headline)
+                        .foregroundColor(deficit > 0 ? .green : .red)
+                }
+                .padding(.horizontal)
+            }
         }
+        .padding(.vertical, 10)
     }
 }
 
@@ -136,35 +172,34 @@ struct SummaryItem: View {
 
 struct FoodPickerView: View {
     @Environment(\.dismiss) private var dismiss
-    @Binding var selectedFoods: [DietTag]
+    @Binding var selectedFoods: [SelectedFoodItem]
     
     @FetchRequest(
         sortDescriptors: [NSSortDescriptor(keyPath: \DietTag.name, ascending: true)],
         animation: .default)
     private var allFoods: FetchedResults<DietTag>
     
+    @State private var searchText = ""
+    
+    var filteredFoods: [DietTag] {
+        if searchText.isEmpty {
+            return Array(allFoods)
+        } else {
+            return allFoods.filter { ($0.name ?? "").localizedCaseInsensitiveContains(searchText) }
+        }
+    }
+    
     var body: some View {
         NavigationView {
             List {
-                ForEach(allFoods) { food in
-                    Button(action: {
-                        selectedFoods.append(food)
+                ForEach(filteredFoods) { food in
+                    FoodPickerRow(food: food) { portion in
+                        selectedFoods.append(SelectedFoodItem(food: food, portion: portion))
                         dismiss()
-                    }) {
-                        HStack {
-                            Text(food.name ?? "未知")
-                                .foregroundColor(.primary)
-                            Spacer()
-                            VStack(alignment: .trailing) {
-                                Text("\(Int(food.calories)) kcal")
-                                Text("P:\(Int(food.protein)) C:\(Int(food.carbs)) F:\(Int(food.fat))")
-                                    .font(.caption)
-                            }
-                            .foregroundColor(.secondary)
-                        }
                     }
                 }
             }
+            .searchable(text: $searchText, prompt: "搜索食物")
             .navigationTitle("选择食物")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -172,6 +207,48 @@ struct FoodPickerView: View {
                 }
             }
         }
+    }
+}
+
+struct FoodPickerRow: View {
+    let food: DietTag
+    let onSelect: (Double) -> Void
+    @State private var portion: Double = 1.0
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(food.name ?? "未知")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                Spacer()
+                VStack(alignment: .trailing) {
+                    Text("\(Int(food.calories)) kcal/份")
+                    Text("P:\(Int(food.protein)) C:\(Int(food.carbs)) F:\(Int(food.fat))")
+                        .font(.caption)
+                }
+                .foregroundColor(.secondary)
+            }
+            
+            HStack {
+                Text("份数:")
+                    .foregroundColor(.primary)
+                Stepper(value: $portion, in: 0.5...10, step: 0.5) {
+                    Text("\(String(format: "%.1f", portion))")
+                        .foregroundColor(.primary)
+                }
+                .frame(maxWidth: 150)
+                
+                Spacer()
+                
+                Button("添加") {
+                    onSelect(portion)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 
