@@ -1,6 +1,5 @@
 import SwiftUI
 import CoreData
-import UIKit
 
 struct SelectedFoodItem: Identifiable {
     let id = UUID()
@@ -54,10 +53,11 @@ struct AddDietRecordView: View {
                         }
                     }
                 }
+                .scrollDismissesKeyboard(.immediately)
                 
                 DietSummaryView(foods: selectedFoods)
                     .padding()
-                    .background(Color(UIColor.secondarySystemBackground))
+                    .background(Color(.systemGray6))
             }
             .navigationTitle("新建饮食记录")
             .toolbar {
@@ -199,6 +199,7 @@ struct FoodPickerView: View {
                     }
                 }
             }
+            .scrollDismissesKeyboard(.immediately)
             .searchable(text: $searchText, prompt: "搜索食物")
             .navigationTitle("选择食物")
             .toolbar {

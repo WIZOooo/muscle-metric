@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreData
 import HealthKit
+import Combine
 import UIKit
 
 struct DietRecordDetailView: View {
@@ -72,6 +73,12 @@ struct DietRecordDetailView: View {
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                             .frame(width: 80)
+                            .onReceive(NotificationCenter.default.publisher(for: UIApplication.keyboardWillHideNotification)) { _ in
+                                saveContext()
+                            }
+                            .onSubmit {
+                                saveContext()
+                            }
                         Text("kcal")
                             .foregroundColor(.secondary)
                             .font(.caption)
@@ -106,10 +113,11 @@ struct DietRecordDetailView: View {
                     }
                 }
             }
+            .scrollDismissesKeyboard(.immediately)
             
             DietSummaryView(foods: selectedFoodItems, bmr: bmr, activeEnergy: record.activeEnergy)
                 .padding()
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(Color(.systemGray6))
         }
         .navigationTitle("饮食记录详情")
         .toolbar {

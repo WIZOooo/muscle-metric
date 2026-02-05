@@ -63,6 +63,11 @@ struct DietRecordListView: View {
                 AddDietRecordView()
             }
         }
+        .onAppear {
+            for record in records.prefix(5) {
+                viewContext.refresh(record, mergeChanges: true)
+            }
+        }
     }
 
     private func deleteItems(offsets: IndexSet) {
