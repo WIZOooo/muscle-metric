@@ -90,26 +90,36 @@ struct DietRecordDetailView: View {
                     }
                 }
                 
-                Section(header: Text("已选食物")) {
+                Section {
                     ForEach(entries) { entry in
                         if let food = entry.foodTag {
+                            let portion = entry.portion == 0 ? 1.0 : entry.portion
                             HStack {
                                 VStack(alignment: .leading) {
                                     Text(food.name ?? "未知")
-                                    Text("份数: \(String(format: "%.1f", entry.portion == 0 ? 1.0 : entry.portion))")
+                                    Text("份数: \(String(format: "%.1f", portion))")
                                         .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Text("蛋白质 \(String(format: "%.1f", food.protein * portion))g · 碳水 \(String(format: "%.1f", food.carbs * portion))g · 脂肪 \(String(format: "%.1f", food.fat * portion))g")
+                                        .font(.caption2)
                                         .foregroundColor(.secondary)
                                 }
                                 Spacer()
-                                Text("\(Int(food.calories * (entry.portion == 0 ? 1.0 : entry.portion))) kcal")
+                                Text("\(Int(food.calories * portion)) kcal")
                                     .foregroundColor(.secondary)
                             }
                         }
                     }
                     .onDelete(perform: deleteEntry)
-                    
-                    Button(action: { showFoodPicker = true }) {
-                        Label("添加食物", systemImage: "plus")
+                } header: {
+                    HStack {
+                        Text("已选食物")
+                        Spacer()
+                        Button(action: { showFoodPicker = true }) {
+                            Label("添加", systemImage: "plus")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
                     }
                 }
             }

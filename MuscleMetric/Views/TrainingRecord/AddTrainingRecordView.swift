@@ -260,6 +260,7 @@ struct AddEntrySheet: View {
 struct ActionSelectionListView: View {
     let actions: [TrainingTag]
     @Binding var selection: TrainingTag?
+    var initialExpandedCategory: String?
     @Environment(\.dismiss) private var dismiss
     
     @State private var expandedCategories: Set<String> = []
@@ -315,6 +316,11 @@ struct ActionSelectionListView: View {
             }
         }
         .navigationTitle("选择动作")
+        .onAppear {
+            if let initialExpandedCategory {
+                expandedCategories = [initialExpandedCategory]
+            }
+        }
     }
 }
 
@@ -338,7 +344,7 @@ struct ActionPicker: View {
     }
     
     var body: some View {
-        NavigationLink(destination: ActionSelectionListView(actions: Array(actions), selection: $selection)) {
+        NavigationLink(destination: ActionSelectionListView(actions: Array(actions), selection: $selection, initialExpandedCategory: nil)) {
             HStack {
                 Text("动作")
                 Spacer()

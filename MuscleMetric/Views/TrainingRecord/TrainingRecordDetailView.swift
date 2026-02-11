@@ -21,6 +21,13 @@ struct TrainingRecordDetailView: View {
     @State private var newActionName = ""
     @State private var newActionCategory = ""
     @State private var newActionInitialWeight = ""
+
+    struct CategoryActionPickerContext: Identifiable {
+        let id = UUID()
+        let initialCategory: String
+    }
+    @State private var categoryActionPickerContext: CategoryActionPickerContext?
+    @State private var pendingActionToAdd: TrainingTag?
     
     // Quick Add Weight sheet
     struct QuickAddContext: Identifiable {
@@ -194,9 +201,18 @@ struct TrainingRecordDetailView: View {
                                 }
                             }
                         } label: {
-                            Text(category.name)
-                                .font(.headline)
-                                .foregroundColor(.primary)
+                            HStack(spacing: 12) {
+                                Text(category.name)
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Button("添加") {
+                                    categoryActionPickerContext = CategoryActionPickerContext(initialCategory: category.name)
+                                }
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                                .buttonStyle(.borderless)
+                            }
                         }
                     }
                 }
@@ -275,6 +291,20 @@ struct TrainingRecordDetailView: View {
                 }
             }
             .presentationDetents([.medium])
+        }
+        .sheet(item: $categoryActionPickerContext, onDismiss: {
+            if let pendingActionToAdd {
+                quickAddContext = QuickAddContext(action: pendingActionToAdd)
+                self.pendingActionToAdd = nil
+            }
+        }) { context in
+            if let gym = record.gymTag {
+                CategoryActionSelectionSheet(gym: gym, initialExpandedCategory: context.initialCategory) { selected in
+                    pendingActionToAdd = selected
+                }
+            } else {
+                Text("错误：无法获取门店信息")
+            }
         }
         .sheet(item: $quickAddContext) { context in
             if let gym = context.action.parent ?? record.gymTag {
@@ -388,6 +418,48 @@ struct TrainingRecordDetailView: View {
         
         UIPasteboard.general.string = text
         showCopiedAlert = true
+    }
+}
+
+struct CategoryActionSelectionSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    var gym: TrainingTag
+    var initialExpandedCategory: String?
+    var onPick: (TrainingTag) -> Void
+
+    @FetchRequest var actions: FetchedResults<TrainingTag>
+    @State private var selection: TrainingTag?
+
+    init(gym: TrainingTag, initialExpandedCategory: String?, onPick: @escaping (TrainingTag) -> Void) {
+        self.gym = gym
+        self.initialExpandedCategory = initialExpandedCategory
+        self.onPick = onPick
+        self._actions = FetchRequest(
+            entity: TrainingTag.entity(),
+            sortDescriptors: [
+                NSSortDescriptor(keyPath: \TrainingTag.category, ascending: true),
+                NSSortDescriptor(keyPath: \TrainingTag.name, ascending: true)
+            ],
+            predicate: NSPredicate(format: "parent == %@", gym)
+        )
+    }
+
+    var body: some View {
+        NavigationView {
+            ActionSelectionListView(
+                actions: Array(actions),
+                selection: $selection,
+                initialExpandedCategory: initialExpandedCategory
+            )
+            .onChange(of: selection) { newValue in
+                if let newValue { onPick(newValue) }
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+            }
+        }
     }
 }
 

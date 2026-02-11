@@ -25,7 +25,7 @@ struct TrainingRecordListView: View {
                             if let gym = record.gymTag {
                                 Text("门店: \(gym.name ?? "")")
                                     .font(.caption)
-                                    .foregroundColor(.blue)
+                                    .foregroundColor(.secondary)
                             }
                         }
                     }
