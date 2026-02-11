@@ -2,7 +2,11 @@ import SwiftUI
 import CoreData
 import HealthKit
 import Combine
+#if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 struct DietRecordDetailView: View {
     @Environment(\.managedObjectContext) private var viewContext
@@ -22,6 +26,9 @@ struct DietRecordDetailView: View {
     
     @State private var showFoodPicker = false
     @State private var showCopiedAlert = false
+    @State private var isRefreshingActiveEnergy = false
+    @State private var showActiveEnergyErrorAlert = false
+    @State private var activeEnergyErrorMessage = ""
     
     var entries: [DietEntry] {
         let set = record.entries as? Set<DietEntry> ?? []
@@ -73,7 +80,7 @@ struct DietRecordDetailView: View {
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                             .frame(width: 80)
-                            .onReceive(NotificationCenter.default.publisher(for: UIApplication.keyboardWillHideNotification)) { _ in
+                            .onKeyboardWillHide {
                                 saveContext()
                             }
                             .onSubmit {
@@ -84,9 +91,15 @@ struct DietRecordDetailView: View {
                             .font(.caption)
                         
                         Button(action: refreshActiveEnergy) {
-                            Image(systemName: "arrow.clockwise")
+                            if isRefreshingActiveEnergy {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
                         }
                         .buttonStyle(.borderless)
+                        .disabled(isRefreshingActiveEnergy)
                     }
                 }
                 
@@ -152,30 +165,57 @@ struct DietRecordDetailView: View {
                 }
             ))
         }
+        .alert("无法获取活动热量", isPresented: $showActiveEnergyErrorAlert) {
+            Button("好", role: .cancel) { }
+        } message: {
+            Text(activeEnergyErrorMessage)
+        }
         .onAppear {
-             if record.activeEnergy == 0 {
-                 refreshActiveEnergy()
-             }
+            guard record.activeEnergy == 0 else { return }
+            guard HKHealthStore.isHealthDataAvailable() else { return }
+            guard let activeEnergyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) else { return }
+            if HealthKitManager.shared.healthStore.authorizationStatus(for: activeEnergyType) == .sharingAuthorized {
+                refreshActiveEnergy()
+            }
         }
     }
     
     private func refreshActiveEnergy() {
-        // Temporarily disabled HealthKit integration
-        /*
-        guard let date = record.date else { return }
-        HealthKitManager.shared.requestAuthorization { success, _ in
-            if success {
-                HealthKitManager.shared.fetchActiveEnergy(for: date) { energy in
-                    if let energy = energy {
-                        DispatchQueue.main.async {
-                            record.activeEnergy = energy
+        guard !isRefreshingActiveEnergy else { return }
+        guard HKHealthStore.isHealthDataAvailable() else {
+            presentActiveEnergyError("当前设备不支持读取健康数据。")
+            return
+        }
+
+        let date = record.date ?? Date()
+        isRefreshingActiveEnergy = true
+        HealthKitManager.shared.requestAuthorization { authResult in
+            switch authResult {
+            case .success:
+                HealthKitManager.shared.fetchActiveEnergy(for: date) { fetchResult in
+                    DispatchQueue.main.async {
+                        isRefreshingActiveEnergy = false
+                        switch fetchResult {
+                        case .success(let energy):
+                            record.activeEnergy = energy.rounded(.toNearestOrAwayFromZero)
                             saveContext()
+                        case .failure(let error):
+                            presentActiveEnergyError(error.localizedDescription)
                         }
                     }
                 }
+            case .failure(let error):
+                DispatchQueue.main.async {
+                    isRefreshingActiveEnergy = false
+                    presentActiveEnergyError(error.localizedDescription)
+                }
             }
         }
-        */
+    }
+
+    private func presentActiveEnergyError(_ message: String) {
+        activeEnergyErrorMessage = message
+        showActiveEnergyErrorAlert = true
     }
     
     private func addEntry(item: SelectedFoodItem) {
@@ -237,9 +277,27 @@ struct DietRecordDetailView: View {
         text += "总蛋白质: \(Int(totalP)) g\n"
         text += "总碳水: \(Int(totalC)) g\n"
         text += "总脂肪: \(Int(totalF)) g\n"
-        
+
+#if canImport(UIKit)
         UIPasteboard.general.string = text
+#elseif canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+#endif
         showCopiedAlert = true
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func onKeyboardWillHide(_ action: @escaping () -> Void) -> some View {
+#if canImport(UIKit)
+        onReceive(NotificationCenter.default.publisher(for: UIApplication.keyboardWillHideNotification)) { _ in
+            action()
+        }
+#else
+        self
+#endif
     }
 }
 
@@ -259,6 +317,23 @@ private let dateFormatter: DateFormatter = {
     return formatter
 }()
 
+enum HealthKitManagerError: LocalizedError {
+    case healthDataNotAvailable
+    case activeEnergyTypeUnavailable
+    case authorizationDenied
+
+    var errorDescription: String? {
+        switch self {
+        case .healthDataNotAvailable:
+            return "当前设备不支持读取健康数据。"
+        case .activeEnergyTypeUnavailable:
+            return "无法读取活动能量类型。"
+        case .authorizationDenied:
+            return "未获得健康数据读取权限。"
+        }
+    }
+}
+
 class HealthKitManager {
     static let shared = HealthKitManager()
     
@@ -266,28 +341,40 @@ class HealthKitManager {
     
     private init() {}
     
-    func requestAuthorization(completion: @escaping (Bool, Error?) -> Void) {
+    func requestAuthorization(completion: @escaping (Result<Void, Error>) -> Void) {
         guard HKHealthStore.isHealthDataAvailable() else {
-            completion(false, NSError(domain: "com.muscleMetric", code: 1, userInfo: [NSLocalizedDescriptionKey: "HealthKit not available"]))
+            completion(.failure(HealthKitManagerError.healthDataNotAvailable))
             return
         }
         
-        let activeEnergyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!
+        guard let activeEnergyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) else {
+            completion(.failure(HealthKitManagerError.activeEnergyTypeUnavailable))
+            return
+        }
         let typesToShare: Set<HKSampleType> = []
-        let typesToRead: Set = [activeEnergyType]
+        let typesToRead: Set<HKObjectType> = [activeEnergyType]
         
         healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead) { success, error in
-            completion(success, error)
+            if success {
+                completion(.success(()))
+            } else if let error {
+                completion(.failure(error))
+            } else {
+                completion(.failure(HealthKitManagerError.authorizationDenied))
+            }
         }
     }
     
-    func fetchActiveEnergy(for date: Date, completion: @escaping (Double?) -> Void) {
+    func fetchActiveEnergy(for date: Date, completion: @escaping (Result<Double, Error>) -> Void) {
         guard HKHealthStore.isHealthDataAvailable() else {
-            completion(nil)
+            completion(.failure(HealthKitManagerError.healthDataNotAvailable))
             return
         }
         
-        let activeEnergyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!
+        guard let activeEnergyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) else {
+            completion(.failure(HealthKitManagerError.activeEnergyTypeUnavailable))
+            return
+        }
         
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: date)
@@ -296,13 +383,13 @@ class HealthKitManager {
         let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: endOfDay, options: .strictStartDate)
         
         let query = HKStatisticsQuery(quantityType: activeEnergyType, quantitySamplePredicate: predicate, options: .cumulativeSum) { _, result, error in
-            guard let result = result, let sum = result.sumQuantity() else {
-                completion(nil)
+            if let error {
+                completion(.failure(error))
                 return
             }
-            
-            let calories = sum.doubleValue(for: HKUnit.kilocalorie())
-            completion(calories)
+
+            let calories = (result?.sumQuantity() ?? HKQuantity(unit: .kilocalorie(), doubleValue: 0)).doubleValue(for: .kilocalorie())
+            completion(.success(calories.rounded(.toNearestOrAwayFromZero)))
         }
         
         healthStore.execute(query)

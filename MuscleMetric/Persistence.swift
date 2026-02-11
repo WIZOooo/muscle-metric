@@ -55,20 +55,30 @@ struct PersistenceController {
             if let bundleIdentifier = Bundle.main.bundleIdentifier, !bundleIdentifier.isEmpty {
                 let containerIdentifier = "iCloud.\(bundleIdentifier)"
                 description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(containerIdentifier: containerIdentifier)
+#if DEBUG
                 print("[CloudKit] bundleIdentifier=\(bundleIdentifier)")
                 print("[CloudKit] containerIdentifier=\(containerIdentifier)")
+#endif
             } else {
+#if DEBUG
                 print("[CloudKit] bundleIdentifier missing; CloudKit container not explicitly configured")
+#endif
             }
 
             if let storeURL = description.url {
+#if DEBUG
                 print("[CoreData] storeURL=\(storeURL.path)")
+#endif
             }
 
             if let backgroundModes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] {
+#if DEBUG
                 print("[InfoPlist] UIBackgroundModes=\(backgroundModes)")
+#endif
             } else {
+#if DEBUG
                 print("[InfoPlist] UIBackgroundModes missing")
+#endif
             }
         }
         container.loadPersistentStores(completionHandler: { (storeDescription, error) in
@@ -88,15 +98,23 @@ struct PersistenceController {
             }
 
             if let containerIdentifier = storeDescription.cloudKitContainerOptions?.containerIdentifier {
+#if DEBUG
                 print("[CloudKit] storeLoaded containerIdentifier=\(containerIdentifier)")
+#endif
             } else {
+#if DEBUG
                 print("[CloudKit] storeLoaded without cloudKitContainerOptions (likely iCloud/CloudKit capability missing)")
+#endif
             }
         })
         container.viewContext.automaticallyMergesChangesFromParent = true
 
         NotificationCenter.default.addObserver(forName: NSPersistentCloudKitContainer.eventChangedNotification, object: container, queue: nil) { notification in
             guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey] as? NSPersistentCloudKitContainer.Event else {
+                return
+            }
+
+            guard event.succeeded == false || event.error != nil else {
                 return
             }
 
@@ -112,12 +130,13 @@ struct PersistenceController {
                 typeText = "unknown"
             }
 
-            let successText = event.succeeded ? "success" : "failure"
+#if DEBUG
             if let error = event.error {
-                print("[CloudKitEvent] type=\(typeText) \(successText) error=\(error)")
+                print("[CloudKitEvent] type=\(typeText) failure error=\(error)")
             } else {
-                print("[CloudKitEvent] type=\(typeText) \(successText)")
+                print("[CloudKitEvent] type=\(typeText) failure")
             }
+#endif
         }
     }
 }
