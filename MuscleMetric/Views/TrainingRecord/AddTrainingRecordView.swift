@@ -9,8 +9,6 @@ struct AddTrainingRecordView: View {
     @State private var timestamp = Date()
     @State private var selectedGym: TrainingTag?
     
-    @State private var showCopiedAlert = false
-    
     // Temporary struct to hold selected entries before saving
     struct TempEntry: Identifiable {
         let id = UUID()
@@ -82,12 +80,6 @@ struct AddTrainingRecordView: View {
                             .foregroundColor(.secondary)
                     }
                 }
-                
-                Section {
-                    Button("复制到剪切板") {
-                        copyToClipboard()
-                    }
-                }
             }
             .navigationTitle("新建力训记录")
             .toolbar {
@@ -99,7 +91,7 @@ struct AddTrainingRecordView: View {
                         saveRecord()
                         dismiss()
                     }
-                    .disabled(selectedGym == nil || tempEntries.isEmpty)
+                    .disabled(selectedGym == nil)
                 }
             }
             .sheet(isPresented: $showAddEntrySheet) {
@@ -108,11 +100,6 @@ struct AddTrainingRecordView: View {
                         tempEntries.append(TempEntry(action: action, weight: weight))
                     }
                 }
-            }
-            .alert("已复制", isPresented: $showCopiedAlert) {
-                Button("好", role: .cancel) { }
-            } message: {
-                Text("记录内容已复制到剪切板")
             }
         }
     }
@@ -140,21 +127,6 @@ struct AddTrainingRecordView: View {
         } catch {
             print("Error saving record: \(error)")
         }
-    }
-    
-    private func copyToClipboard() {
-        var text = ""
-        text += "标题: \(title.isEmpty ? "训练记录" : title)\n"
-        text += "时间: \(itemFormatter.string(from: timestamp))\n"
-        if let gym = selectedGym {
-            text += "门店: \(gym.name ?? "")\n"
-        }
-        text += "----------------\n"
-        for entry in tempEntries {
-            text += "- \(entry.action.name ?? ""): \(entry.weight.name ?? "")\n"
-        }
-        UIPasteboard.general.string = text
-        showCopiedAlert = true
     }
 }
 
@@ -385,10 +357,3 @@ struct WeightPicker: View {
         }
     }
 }
-
-private let itemFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .short
-    return formatter
-}()

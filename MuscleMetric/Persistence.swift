@@ -51,6 +51,8 @@ struct PersistenceController {
         if let description = container.persistentStoreDescriptions.first {
             description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
             description.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
+            description.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
+            description.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
 
             if let bundleIdentifier = Bundle.main.bundleIdentifier, !bundleIdentifier.isEmpty {
                 let containerIdentifier = "iCloud.\(bundleIdentifier)"
@@ -201,6 +203,9 @@ struct CoreDataDeduplicator {
 
         try dedupeTrainingEntries(in: context, report: &report)
         try dedupeDietEntries(in: context, report: &report)
+
+        try dedupeBodyMeasurements(in: context, report: &report)
+        try dedupeMeasurementEntries(in: context, report: &report)
     }
 
     private static func normalizeMissingIds(in context: NSManagedObjectContext, report: inout SyncReport) throws {
@@ -211,6 +216,8 @@ struct CoreDataDeduplicator {
         try normalizeMissingIds(entityName: "TrainingEntry", in: context, report: &report)
         try normalizeMissingIds(entityName: "DietEntry", in: context, report: &report)
         try normalizeMissingIds(entityName: "UserProfile", in: context, report: &report)
+        try normalizeMissingIds(entityName: "BodyMeasurement", in: context, report: &report)
+        try normalizeMissingIds(entityName: "MeasurementEntry", in: context, report: &report)
     }
 
     private static func normalizeMissingIds(entityName: String, in context: NSManagedObjectContext, report: inout SyncReport) throws {
@@ -340,6 +347,39 @@ struct CoreDataDeduplicator {
         }
     }
 
+    private static func dedupeBodyMeasurements(in context: NSManagedObjectContext, report: inout SyncReport) throws {
+        let request = NSFetchRequest<BodyMeasurement>(entityName: "BodyMeasurement")
+        request.returnsObjectsAsFaults = false
+        request.includesPropertyValues = true
+
+        let measurements = try context.fetch(request)
+        try dedupeById(tags: measurements, entityName: "BodyMeasurement", report: &report) { canonical, other in
+            mergeBodyMeasurement(from: other, into: canonical)
+        }
+
+        let byKey = Dictionary(grouping: try context.fetch(request), by: { bodyMeasurementSemanticKey($0) })
+        for (_, group) in byKey where group.count > 1 {
+            let canonical = group.max(by: { score($0) < score($1) }) ?? group[0]
+            for other in group where other != canonical {
+                mergeBodyMeasurement(from: other, into: canonical)
+                context.delete(other)
+                report.deletedDuplicates["BodyMeasurement", default: 0] += 1
+                report.mergedBySemanticKey["BodyMeasurement", default: 0] += 1
+            }
+        }
+    }
+
+    private static func dedupeMeasurementEntries(in context: NSManagedObjectContext, report: inout SyncReport) throws {
+        let request = NSFetchRequest<MeasurementEntry>(entityName: "MeasurementEntry")
+        request.returnsObjectsAsFaults = false
+        request.includesPropertyValues = true
+
+        let entries = try context.fetch(request)
+        try dedupeById(tags: entries, entityName: "MeasurementEntry", report: &report) { canonical, other in
+            mergeMeasurementEntry(from: other, into: canonical)
+        }
+    }
+
     private static func dedupeById<T: NSManagedObject & Identifiable>(tags: [T], entityName: String, report: inout SyncReport, merge: (T, T) -> Void) throws {
         var byId: [UUID: [T]] = [:]
         for obj in tags {
@@ -419,6 +459,10 @@ struct CoreDataDeduplicator {
         if canonical.timestamp == nil, let v = other.timestamp { canonical.timestamp = v }
         if (canonical.title ?? "").isEmpty, let v = other.title, !v.isEmpty { canonical.title = v }
         if canonical.gymTag == nil, let v = other.gymTag { canonical.gymTag = v }
+        if (canonical.planId ?? "").isEmpty, let v = other.planId, !v.isEmpty { canonical.planId = v }
+        if (canonical.planName ?? "").isEmpty, let v = other.planName, !v.isEmpty { canonical.planName = v }
+        if (canonical.planDayId ?? "").isEmpty, let v = other.planDayId, !v.isEmpty { canonical.planDayId = v }
+        if (canonical.planDayTitle ?? "").isEmpty, let v = other.planDayTitle, !v.isEmpty { canonical.planDayTitle = v }
 
         if let entries = other.entries as? Set<TrainingEntry> {
             for entry in entries {
@@ -431,6 +475,7 @@ struct CoreDataDeduplicator {
         if canonical.date == nil, let v = other.date { canonical.date = v }
         if (canonical.title ?? "").isEmpty, let v = other.title, !v.isEmpty { canonical.title = v }
         if canonical.activeEnergy == 0, other.activeEnergy > 0 { canonical.activeEnergy = other.activeEnergy }
+        if canonical.restingEnergy == 0, other.restingEnergy > 0 { canonical.restingEnergy = other.restingEnergy }
 
         if let entries = other.entries as? Set<DietEntry> {
             for entry in entries {
@@ -441,6 +486,13 @@ struct CoreDataDeduplicator {
 
     private static func mergeTrainingEntry(from other: TrainingEntry, into canonical: TrainingEntry) {
         if canonical.orderIndex == 0, other.orderIndex != 0 { canonical.orderIndex = other.orderIndex }
+        if (canonical.exerciseName ?? "").isEmpty, let v = other.exerciseName, !v.isEmpty { canonical.exerciseName = v }
+        if (canonical.planRep ?? "").isEmpty, let v = other.planRep, !v.isEmpty { canonical.planRep = v }
+        if (canonical.planRest ?? "").isEmpty, let v = other.planRest, !v.isEmpty { canonical.planRest = v }
+        if canonical.planTargetSet == 0, other.planTargetSet != 0 { canonical.planTargetSet = other.planTargetSet }
+        if canonical.planFinishedSet == 0, other.planFinishedSet != 0 { canonical.planFinishedSet = other.planFinishedSet }
+        if (canonical.maxWeight ?? "").isEmpty, let v = other.maxWeight, !v.isEmpty { canonical.maxWeight = v }
+        if (canonical.notes ?? "").isEmpty, let v = other.notes, !v.isEmpty { canonical.notes = v }
         if canonical.actionTag == nil, let v = other.actionTag { canonical.actionTag = v }
         if canonical.weightTag == nil, let v = other.weightTag { canonical.weightTag = v }
         if canonical.record == nil, let v = other.record { canonical.record = v }
@@ -451,6 +503,41 @@ struct CoreDataDeduplicator {
         if canonical.portion == 1.0, other.portion != 1.0 { canonical.portion = other.portion }
         if canonical.foodTag == nil, let v = other.foodTag { canonical.foodTag = v }
         if canonical.record == nil, let v = other.record { canonical.record = v }
+    }
+
+    private static func mergeBodyMeasurement(from other: BodyMeasurement, into canonical: BodyMeasurement) {
+        if canonical.timestamp == nil, let v = other.timestamp { canonical.timestamp = v }
+        if canonical.weightKg == 0, other.weightKg > 0 { canonical.weightKg = other.weightKg }
+        if canonical.bodyFatPercent == 0, other.bodyFatPercent > 0 { canonical.bodyFatPercent = other.bodyFatPercent }
+        if canonical.impedance == 0, other.impedance != 0 { canonical.impedance = other.impedance }
+        if canonical.heartRate == 0, other.heartRate != 0 { canonical.heartRate = other.heartRate }
+        if (canonical.deviceId ?? "").isEmpty, let v = other.deviceId, !v.isEmpty { canonical.deviceId = v }
+        if (canonical.deviceName ?? "").isEmpty, let v = other.deviceName, !v.isEmpty { canonical.deviceName = v }
+        if (canonical.source ?? "").isEmpty, let v = other.source, !v.isEmpty { canonical.source = v }
+    }
+
+    private static func mergeMeasurementEntry(from other: MeasurementEntry, into canonical: MeasurementEntry) {
+        if let a = canonical.timestamp, let b = other.timestamp {
+            if b > a { canonical.timestamp = b }
+        } else if canonical.timestamp == nil, let v = other.timestamp {
+            canonical.timestamp = v
+        }
+
+        if (canonical.note ?? "").isEmpty, let v = other.note, !v.isEmpty { canonical.note = v }
+
+        if canonical.weightKg == 0, other.weightKg > 0 { canonical.weightKg = other.weightKg }
+        if canonical.bodyFatPercent == 0, other.bodyFatPercent > 0 { canonical.bodyFatPercent = other.bodyFatPercent }
+        if canonical.leanBodyMassKg == 0, other.leanBodyMassKg > 0 { canonical.leanBodyMassKg = other.leanBodyMassKg }
+        if canonical.chestCm == 0, other.chestCm > 0 { canonical.chestCm = other.chestCm }
+        if canonical.waistCm == 0, other.waistCm > 0 { canonical.waistCm = other.waistCm }
+        if canonical.hipCm == 0, other.hipCm > 0 { canonical.hipCm = other.hipCm }
+        if canonical.shoulderWidthCm == 0, other.shoulderWidthCm > 0 { canonical.shoulderWidthCm = other.shoulderWidthCm }
+        if canonical.armLeftCm == 0, other.armLeftCm > 0 { canonical.armLeftCm = other.armLeftCm }
+        if canonical.armRightCm == 0, other.armRightCm > 0 { canonical.armRightCm = other.armRightCm }
+        if canonical.thighLeftCm == 0, other.thighLeftCm > 0 { canonical.thighLeftCm = other.thighLeftCm }
+        if canonical.thighRightCm == 0, other.thighRightCm > 0 { canonical.thighRightCm = other.thighRightCm }
+        if canonical.calfLeftCm == 0, other.calfLeftCm > 0 { canonical.calfLeftCm = other.calfLeftCm }
+        if canonical.calfRightCm == 0, other.calfRightCm > 0 { canonical.calfRightCm = other.calfRightCm }
     }
 
     private static func score(_ obj: NSManagedObject) -> Int {
@@ -497,6 +584,7 @@ struct CoreDataDeduplicator {
             if r.date != nil { s += 1 }
             if !(r.title ?? "").isEmpty { s += 1 }
             if r.activeEnergy > 0 { s += 1 }
+            if r.restingEnergy > 0 { s += 1 }
             if (r.entries as? Set<DietEntry>)?.isEmpty == false { s += 1 }
             return s
         case "TrainingEntry":
@@ -514,6 +602,35 @@ struct CoreDataDeduplicator {
             if e.portion != 1.0 { s += 1 }
             if e.foodTag != nil { s += 1 }
             if e.record != nil { s += 1 }
+            return s
+        case "BodyMeasurement":
+            guard let m = obj as? BodyMeasurement else { return 0 }
+            var s = 0
+            if m.timestamp != nil { s += 1 }
+            if m.weightKg > 0 { s += 1 }
+            if m.bodyFatPercent > 0 { s += 1 }
+            if m.impedance != 0 { s += 1 }
+            if m.heartRate != 0 { s += 1 }
+            if !(m.deviceId ?? "").isEmpty { s += 1 }
+            return s
+        case "MeasurementEntry":
+            guard let m = obj as? MeasurementEntry else { return 0 }
+            var s = 0
+            if m.timestamp != nil { s += 1 }
+            if m.weightKg > 0 { s += 1 }
+            if m.bodyFatPercent > 0 { s += 1 }
+            if m.leanBodyMassKg > 0 { s += 1 }
+            if m.chestCm > 0 { s += 1 }
+            if m.waistCm > 0 { s += 1 }
+            if m.hipCm > 0 { s += 1 }
+            if m.shoulderWidthCm > 0 { s += 1 }
+            if m.armLeftCm > 0 { s += 1 }
+            if m.armRightCm > 0 { s += 1 }
+            if m.thighLeftCm > 0 { s += 1 }
+            if m.thighRightCm > 0 { s += 1 }
+            if m.calfLeftCm > 0 { s += 1 }
+            if m.calfRightCm > 0 { s += 1 }
+            if !(m.note ?? "").isEmpty { s += 1 }
             return s
         default:
             return 0
@@ -536,6 +653,21 @@ struct CoreDataDeduplicator {
 
     private static func dietTagSemanticKey(_ tag: DietTag) -> String {
         (tag.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func bodyMeasurementSemanticKey(_ m: BodyMeasurement) -> String {
+        let deviceId = (m.deviceId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let timestampBucket: String
+        if let ts = m.timestamp {
+            let bucketSeconds = Int(ts.timeIntervalSince1970 / 60.0)
+            timestampBucket = "\(bucketSeconds)"
+        } else {
+            timestampBucket = ""
+        }
+
+        let weightKey = "\(round(m.weightKg * 10) / 10)"
+        return "\(deviceId)|\(timestampBucket)|\(weightKey)"
     }
 }
 

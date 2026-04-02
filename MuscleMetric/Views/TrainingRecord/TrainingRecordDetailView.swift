@@ -21,6 +21,8 @@ struct TrainingRecordDetailView: View {
     @State private var newActionName = ""
     @State private var newActionCategory = ""
     @State private var newActionInitialWeight = ""
+    @State private var createActionSheetDetent: PresentationDetent = .medium
+    @FocusState private var createActionFocusedField: CreateActionField?
 
     struct CategoryActionPickerContext: Identifiable {
         let id = UUID()
@@ -35,6 +37,12 @@ struct TrainingRecordDetailView: View {
         let action: TrainingTag
     }
     @State private var quickAddContext: QuickAddContext?
+
+    enum CreateActionField: Hashable {
+        case name
+        case category
+        case initialWeight
+    }
     
     // Grouping Logic
     struct GroupedCategory: Identifiable {
@@ -266,12 +274,27 @@ struct TrainingRecordDetailView: View {
             NavigationView {
                 Form {
                     Section {
-                        TextField("动作名称", text: $newActionName)
-                            .frame(minHeight: 44)
-                        TextField("分类 (如: 练胸, 练背)", text: $newActionCategory)
-                            .frame(minHeight: 44)
-                        TextField("初始重量 (可选, 如: 20kg)", text: $newActionInitialWeight)
-                            .frame(minHeight: 44)
+                        HStack {
+                            TextField("动作名称", text: $newActionName)
+                                .focused($createActionFocusedField, equals: .name)
+                                .frame(minHeight: 52)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture { createActionFocusedField = .name }
+                        HStack {
+                            TextField("分类 (如: 练胸, 练背)", text: $newActionCategory)
+                                .focused($createActionFocusedField, equals: .category)
+                                .frame(minHeight: 52)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture { createActionFocusedField = .category }
+                        HStack {
+                            TextField("初始重量 (可选, 如: 20kg)", text: $newActionInitialWeight)
+                                .focused($createActionFocusedField, equals: .initialWeight)
+                                .frame(minHeight: 52)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture { createActionFocusedField = .initialWeight }
                     } header: {
                         Text("动作信息")
                     }
@@ -289,8 +312,22 @@ struct TrainingRecordDetailView: View {
                         .disabled(newActionName.isEmpty)
                     }
                 }
+                .onChange(of: createActionFocusedField) { newValue in
+                    if newValue != nil {
+                        createActionSheetDetent = .large
+                    } else {
+                        createActionSheetDetent = .medium
+                    }
+                }
             }
-            .presentationDetents([.medium])
+            .presentationDetents([.medium, .large], selection: $createActionSheetDetent)
+            .presentationDragIndicator(.visible)
+            .onAppear {
+                createActionSheetDetent = .medium
+                DispatchQueue.main.async {
+                    createActionFocusedField = .name
+                }
+            }
         }
         .sheet(item: $categoryActionPickerContext, onDismiss: {
             if let pendingActionToAdd {

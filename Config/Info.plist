@@ -23,9 +23,13 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSHealthShareUsageDescription</key>
-	<string>我们需要读取您的活动能量以计算热量缺口。</string>
+	<string>我们需要读取您的体重、体脂率、去脂体重与活动能量等健康数据，用于同步测量记录与热量统计。</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>我们需要访问您的健康数据。</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>我们需要使用蓝牙连接体脂秤以同步体重与体脂数据。</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>我们需要使用蓝牙连接体脂秤以同步体重与体脂数据。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

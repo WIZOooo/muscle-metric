@@ -99,6 +99,15 @@ struct PersonalInfoView: View {
                         }
                     }
 
+                    Section(header: Text("管理")) {
+                        NavigationLink("标签管理") {
+                            TagManagerView()
+                        }
+                        NavigationLink("测量数据") {
+                            MeasurementEntryListView()
+                        }
+                    }
+
                     Section(header: Text("iCloud 同步")) {
                         Text(iCloudStatusMessage)
                             .font(.footnote)
@@ -145,6 +154,7 @@ struct PersonalInfoView: View {
                         .disabled(isExporting)
                     }
                 }
+                .scrollDismissesKeyboard(.immediately)
                 .navigationTitle("个人信息")
                 .onAppear { refreshICloudStatus() }
                 .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification).receive(on: RunLoop.main)) { notification in

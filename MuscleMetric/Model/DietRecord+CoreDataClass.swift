@@ -7,6 +7,7 @@ public class DietRecord: NSManagedObject, Identifiable {
     @NSManaged public var date: Date?
     @NSManaged public var title: String?
     @NSManaged public var activeEnergy: Double
+    @NSManaged public var restingEnergy: Double
     @NSManaged public var entries: NSSet?
 }
 

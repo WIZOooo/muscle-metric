@@ -8,6 +8,19 @@ import UIKit
 import AppKit
 #endif
 
+struct RestingEnergyDailyValue: Identifiable, Equatable {
+    let date: Date
+    let kilocalories: Double
+    let usedInAverage: Bool
+
+    var id: Date { date }
+}
+
+struct RestingEnergyAverageResult: Equatable {
+    let averageKilocalories: Double
+    let dailyValues: [RestingEnergyDailyValue]
+}
+
 struct DietRecordDetailView: View {
     @Environment(\.managedObjectContext) private var viewContext
     @ObservedObject var record: DietRecord
@@ -23,12 +36,38 @@ struct DietRecordDetailView: View {
         guard let weight = userProfile?.weight, weight > 0 else { return 0 }
         return weight * 24
     }
+
+    private var effectiveBmr: Double? {
+        let storedResting = record.restingEnergy > 0 ? record.restingEnergy : nil
+        let resting = restingEnergyFromHealthKit ?? storedResting
+        if isBmrSourceResolved == false && resting == nil {
+            return nil
+        }
+        return resting ?? bmr
+    }
+
+    private var bmrDisplayText: String {
+        let storedResting = record.restingEnergy > 0 ? record.restingEnergy : nil
+        let resting = restingEnergyFromHealthKit ?? storedResting
+        if isBmrSourceResolved == false && resting == nil {
+            return "获取中…"
+        }
+        return "\(Int(resting ?? bmr)) kcal"
+    }
     
     @State private var showFoodPicker = false
     @State private var showCopiedAlert = false
     @State private var isRefreshingActiveEnergy = false
     @State private var showActiveEnergyErrorAlert = false
     @State private var activeEnergyErrorMessage = ""
+    @State private var restingEnergyFromHealthKit: Double?
+    @State private var restingEnergyDailyValues: [RestingEnergyDailyValue] = []
+    @State private var hasAttemptedRestingEnergyAutoFetch = false
+    @State private var isBmrSourceResolved = false
+    @State private var isRefreshingRestingEnergy = false
+    @State private var showRestingEnergyErrorAlert = false
+    @State private var restingEnergyErrorMessage = ""
+    @State private var showAddDietTagSheet = false
     
     var entries: [DietEntry] {
         let set = record.entries as? Set<DietEntry> ?? []
@@ -46,6 +85,13 @@ struct DietRecordDetailView: View {
     private var customDateFormatter: DateFormatter {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy/MM/dd EEEE"
+        formatter.locale = Locale(identifier: "zh_CN")
+        return formatter
+    }
+
+    private var dayDateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM/dd"
         formatter.locale = Locale(identifier: "zh_CN")
         return formatter
     }
@@ -69,8 +115,19 @@ struct DietRecordDetailView: View {
                     HStack {
                         Text("基础代谢")
                         Spacer()
-                        Text("\(Int(bmr)) kcal")
+                        Text(bmrDisplayText)
                             .foregroundColor(.secondary)
+
+                        Button(action: refreshRestingEnergy) {
+                            if isRefreshingRestingEnergy {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(isRefreshingRestingEnergy)
                     }
                     
                     HStack {
@@ -100,6 +157,24 @@ struct DietRecordDetailView: View {
                         }
                         .buttonStyle(.borderless)
                         .disabled(isRefreshingActiveEnergy)
+                    }
+                }
+
+                if !restingEnergyDailyValues.isEmpty {
+                    Section(header: Text("静息能量（用于基础代谢）")) {
+                        ForEach(restingEnergyDailyValues) { item in
+                            HStack {
+                                Text(dayDateFormatter.string(from: item.date))
+                                Spacer()
+                                Text("\(Int(item.kilocalories)) kcal")
+                                    .foregroundColor(item.usedInAverage ? .secondary : .secondary.opacity(0.6))
+                                if !item.usedInAverage {
+                                    Text("忽略")
+                                        .foregroundColor(.secondary)
+                                        .font(.caption)
+                                }
+                            }
+                        }
                     }
                 }
                 
@@ -138,7 +213,7 @@ struct DietRecordDetailView: View {
             }
             .scrollDismissesKeyboard(.immediately)
             
-            DietSummaryView(foods: selectedFoodItems, bmr: bmr, activeEnergy: record.activeEnergy)
+            DietSummaryView(foods: selectedFoodItems, bmr: effectiveBmr, activeEnergy: record.activeEnergy)
                 .padding()
                 .background(Color(.systemGray6))
         }
@@ -149,11 +224,21 @@ struct DietRecordDetailView: View {
                     Image(systemName: "doc.on.doc")
                 }
             }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showAddDietTagSheet = true
+                } label: {
+                    Image(systemName: "tag")
+                }
+            }
         }
         .alert("已复制", isPresented: $showCopiedAlert) {
             Button("好", role: .cancel) { }
         } message: {
             Text("记录详情已复制到剪切板")
+        }
+        .sheet(isPresented: $showAddDietTagSheet) {
+            AddDietTagView()
         }
         .sheet(isPresented: $showFoodPicker) {
             FoodPickerView(selectedFoods: Binding(
@@ -170,12 +255,104 @@ struct DietRecordDetailView: View {
         } message: {
             Text(activeEnergyErrorMessage)
         }
+        .alert("无法获取静息能量", isPresented: $showRestingEnergyErrorAlert) {
+            Button("好", role: .cancel) { }
+        } message: {
+            Text(restingEnergyErrorMessage)
+        }
         .onAppear {
+            if record.restingEnergy > 0 {
+                restingEnergyFromHealthKit = record.restingEnergy
+                isBmrSourceResolved = true
+            }
+            if !hasAttemptedRestingEnergyAutoFetch {
+                hasAttemptedRestingEnergyAutoFetch = true
+                autoRefreshRestingEnergy()
+            }
+
             guard record.activeEnergy == 0 else { return }
             guard HKHealthStore.isHealthDataAvailable() else { return }
             guard let activeEnergyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) else { return }
             if HealthKitManager.shared.healthStore.authorizationStatus(for: activeEnergyType) == .sharingAuthorized {
                 refreshActiveEnergy()
+            }
+        }
+    }
+
+    private func autoRefreshRestingEnergy() {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            isBmrSourceResolved = true
+            return
+        }
+        guard let restingEnergyType = HKQuantityType.quantityType(forIdentifier: .basalEnergyBurned) else {
+            isBmrSourceResolved = true
+            return
+        }
+        let status = HealthKitManager.shared.healthStore.authorizationStatus(for: restingEnergyType)
+        guard status != .sharingDenied else {
+            isBmrSourceResolved = true
+            return
+        }
+        refreshRestingEnergy(showError: false)
+    }
+
+    private func refreshRestingEnergy() {
+        refreshRestingEnergy(showError: true)
+    }
+
+    private func refreshRestingEnergy(showError: Bool) {
+        guard !isRefreshingRestingEnergy else { return }
+        isBmrSourceResolved = false
+        guard HKHealthStore.isHealthDataAvailable() else {
+            if showError {
+                presentRestingEnergyError("当前设备不支持读取健康数据，将使用估算值。")
+            }
+            isBmrSourceResolved = true
+            return
+        }
+
+        let date = record.date ?? Date()
+        isRefreshingRestingEnergy = true
+        HealthKitManager.shared.requestRestingEnergyAuthorization { authResult in
+            switch authResult {
+            case .success:
+                HealthKitManager.shared.fetchRestingEnergyAverage(for: date, days: 3) { fetchResult in
+                    DispatchQueue.main.async {
+                        isRefreshingRestingEnergy = false
+                        isBmrSourceResolved = true
+                        switch fetchResult {
+                        case .success(let result):
+                            restingEnergyFromHealthKit = result.averageKilocalories
+                            restingEnergyDailyValues = result.dailyValues.sorted { $0.date > $1.date }
+                            record.restingEnergy = result.averageKilocalories
+                            saveContext()
+                        case .failure:
+                            if record.restingEnergy > 0 {
+                                restingEnergyFromHealthKit = record.restingEnergy
+                            } else {
+                                restingEnergyFromHealthKit = nil
+                            }
+                            restingEnergyDailyValues = []
+                            if showError {
+                                presentRestingEnergyError("未能读取到近三天的静息能量，将使用估算值。")
+                            }
+                        }
+                    }
+                }
+            case .failure:
+                DispatchQueue.main.async {
+                    isRefreshingRestingEnergy = false
+                    isBmrSourceResolved = true
+                    if record.restingEnergy > 0 {
+                        restingEnergyFromHealthKit = record.restingEnergy
+                    } else {
+                        restingEnergyFromHealthKit = nil
+                    }
+                    restingEnergyDailyValues = []
+                    if showError {
+                        presentRestingEnergyError("未获得健康数据读取权限，将使用估算值。")
+                    }
+                }
             }
         }
     }
@@ -216,6 +393,11 @@ struct DietRecordDetailView: View {
     private func presentActiveEnergyError(_ message: String) {
         activeEnergyErrorMessage = message
         showActiveEnergyErrorAlert = true
+    }
+
+    private func presentRestingEnergyError(_ message: String) {
+        restingEnergyErrorMessage = message
+        showRestingEnergyErrorAlert = true
     }
     
     private func addEntry(item: SelectedFoodItem) {
@@ -320,6 +502,11 @@ private let dateFormatter: DateFormatter = {
 enum HealthKitManagerError: LocalizedError {
     case healthDataNotAvailable
     case activeEnergyTypeUnavailable
+    case restingEnergyTypeUnavailable
+    case restingEnergyNoData
+    case bodyMassTypeUnavailable
+    case bodyFatPercentageTypeUnavailable
+    case leanBodyMassTypeUnavailable
     case authorizationDenied
 
     var errorDescription: String? {
@@ -328,6 +515,16 @@ enum HealthKitManagerError: LocalizedError {
             return "当前设备不支持读取健康数据。"
         case .activeEnergyTypeUnavailable:
             return "无法读取活动能量类型。"
+        case .restingEnergyTypeUnavailable:
+            return "无法读取静息能量类型。"
+        case .restingEnergyNoData:
+            return "未能读取到静息能量数据。"
+        case .bodyMassTypeUnavailable:
+            return "无法读取体重类型。"
+        case .bodyFatPercentageTypeUnavailable:
+            return "无法读取体脂率类型。"
+        case .leanBodyMassTypeUnavailable:
+            return "无法读取去脂体重类型。"
         case .authorizationDenied:
             return "未获得健康数据读取权限。"
         }
@@ -351,10 +548,17 @@ class HealthKitManager {
             completion(.failure(HealthKitManagerError.activeEnergyTypeUnavailable))
             return
         }
+        requestAuthorization(readTypes: [activeEnergyType], completion: completion)
+    }
+
+    func requestAuthorization(readTypes: Set<HKObjectType>, completion: @escaping (Result<Void, Error>) -> Void) {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            completion(.failure(HealthKitManagerError.healthDataNotAvailable))
+            return
+        }
+
         let typesToShare: Set<HKSampleType> = []
-        let typesToRead: Set<HKObjectType> = [activeEnergyType]
-        
-        healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead) { success, error in
+        healthStore.requestAuthorization(toShare: typesToShare, read: readTypes) { success, error in
             if success {
                 completion(.success(()))
             } else if let error {
@@ -363,6 +567,20 @@ class HealthKitManager {
                 completion(.failure(HealthKitManagerError.authorizationDenied))
             }
         }
+    }
+
+    func requestRestingEnergyAuthorization(completion: @escaping (Result<Void, Error>) -> Void) {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            completion(.failure(HealthKitManagerError.healthDataNotAvailable))
+            return
+        }
+
+        guard let restingEnergyType = HKQuantityType.quantityType(forIdentifier: .basalEnergyBurned) else {
+            completion(.failure(HealthKitManagerError.restingEnergyTypeUnavailable))
+            return
+        }
+
+        requestAuthorization(readTypes: [restingEnergyType], completion: completion)
     }
     
     func fetchActiveEnergy(for date: Date, completion: @escaping (Result<Double, Error>) -> Void) {
@@ -392,6 +610,155 @@ class HealthKitManager {
             completion(.success(calories.rounded(.toNearestOrAwayFromZero)))
         }
         
+        healthStore.execute(query)
+    }
+
+    func fetchRestingEnergy(for date: Date, completion: @escaping (Result<Double, Error>) -> Void) {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            completion(.failure(HealthKitManagerError.healthDataNotAvailable))
+            return
+        }
+
+        guard let restingEnergyType = HKQuantityType.quantityType(forIdentifier: .basalEnergyBurned) else {
+            completion(.failure(HealthKitManagerError.restingEnergyTypeUnavailable))
+            return
+        }
+
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: date)
+        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
+
+        let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: endOfDay, options: .strictStartDate)
+
+        let query = HKStatisticsQuery(quantityType: restingEnergyType, quantitySamplePredicate: predicate, options: .cumulativeSum) { _, result, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            let calories = (result?.sumQuantity() ?? HKQuantity(unit: .kilocalorie(), doubleValue: 0)).doubleValue(for: .kilocalorie())
+            completion(.success(calories.rounded(.toNearestOrAwayFromZero)))
+        }
+
+        healthStore.execute(query)
+    }
+
+    func fetchRestingEnergyAverage(for date: Date, days: Int, completion: @escaping (Result<RestingEnergyAverageResult, Error>) -> Void) {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            completion(.failure(HealthKitManagerError.healthDataNotAvailable))
+            return
+        }
+
+        guard let restingEnergyType = HKQuantityType.quantityType(forIdentifier: .basalEnergyBurned) else {
+            completion(.failure(HealthKitManagerError.restingEnergyTypeUnavailable))
+            return
+        }
+
+        let days = max(days, 1)
+        let calendar = Calendar.current
+        let baseDate = calendar.date(byAdding: .day, value: -1, to: date) ?? date
+        let baseStartOfDay = calendar.startOfDay(for: baseDate)
+        let endOfDay = calendar.date(byAdding: .day, value: 1, to: baseStartOfDay)!
+        let startDate = calendar.date(byAdding: .day, value: -(days - 1), to: baseStartOfDay)!
+
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endOfDay, options: .strictStartDate)
+        let anchorDate = baseStartOfDay
+        let interval = DateComponents(day: 1)
+
+        let query = HKStatisticsCollectionQuery(
+            quantityType: restingEnergyType,
+            quantitySamplePredicate: predicate,
+            options: .cumulativeSum,
+            anchorDate: anchorDate,
+            intervalComponents: interval
+        )
+
+        query.initialResultsHandler = { _, results, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let results else {
+                completion(.failure(HealthKitManagerError.restingEnergyNoData))
+                return
+            }
+
+            var dayValues: [(Date, Double)] = []
+            let enumerationEnd = endOfDay.addingTimeInterval(-1)
+            results.enumerateStatistics(from: startDate, to: enumerationEnd) { stats, _ in
+                guard stats.startDate < endOfDay else { return }
+                let value = (stats.sumQuantity() ?? HKQuantity(unit: .kilocalorie(), doubleValue: 0)).doubleValue(for: .kilocalorie())
+                dayValues.append((stats.startDate, value))
+            }
+
+            let nonZeroValues = dayValues.map(\.1).filter { $0 > 0 }
+            guard !nonZeroValues.isEmpty else {
+                completion(.failure(HealthKitManagerError.restingEnergyNoData))
+                return
+            }
+
+            let average = nonZeroValues.reduce(0, +) / Double(nonZeroValues.count)
+            let dailyValues = dayValues
+                .map { (dayStart, value) in
+                    RestingEnergyDailyValue(
+                        date: dayStart,
+                        kilocalories: value.rounded(.toNearestOrAwayFromZero),
+                        usedInAverage: value > 0
+                    )
+                }
+                .sorted { $0.date > $1.date }
+            completion(.success(RestingEnergyAverageResult(averageKilocalories: average.rounded(.toNearestOrAwayFromZero), dailyValues: dailyValues)))
+        }
+
+        healthStore.execute(query)
+    }
+
+    func fetchMostRecentQuantity(
+        identifier: HKQuantityTypeIdentifier,
+        unit: HKUnit,
+        for date: Date,
+        completion: @escaping (Result<Double?, Error>) -> Void
+    ) {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            completion(.failure(HealthKitManagerError.healthDataNotAvailable))
+            return
+        }
+
+        guard let quantityType = HKQuantityType.quantityType(forIdentifier: identifier) else {
+            switch identifier {
+            case .bodyMass:
+                completion(.failure(HealthKitManagerError.bodyMassTypeUnavailable))
+            case .bodyFatPercentage:
+                completion(.failure(HealthKitManagerError.bodyFatPercentageTypeUnavailable))
+            case .leanBodyMass:
+                completion(.failure(HealthKitManagerError.leanBodyMassTypeUnavailable))
+            default:
+                completion(.failure(HealthKitManagerError.authorizationDenied))
+            }
+            return
+        }
+
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: date)
+        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
+        let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: endOfDay, options: .strictStartDate)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+
+        let query = HKSampleQuery(sampleType: quantityType, predicate: predicate, limit: 1, sortDescriptors: [sort]) { _, samples, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let sample = samples?.first as? HKQuantitySample else {
+                completion(.success(nil))
+                return
+            }
+
+            completion(.success(sample.quantity.doubleValue(for: unit)))
+        }
+
         healthStore.execute(query)
     }
 }

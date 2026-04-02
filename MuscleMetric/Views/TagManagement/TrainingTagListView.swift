@@ -13,6 +13,8 @@ struct TrainingTagListView: View {
     @State private var newTagCategory = ""
     
     @State private var editingTag: TrainingTag?
+    @State private var showDuplicatedAlert = false
+    @State private var duplicatedActionName = ""
     
     // State for toggling categories (only used when currentLevel == 2)
     @State private var expandedCategories: Set<String> = []
@@ -102,6 +104,9 @@ struct TrainingTagListView: View {
                                 }
                             }
                             .contextMenu {
+                                Button("复制") {
+                                    duplicateAction(from: tag)
+                                }
                                 Button("编辑") {
                                     editingTag = tag
                                 }
@@ -117,6 +122,12 @@ struct TrainingTagListView: View {
                                 } label: {
                                     Label("删除", systemImage: "trash")
                                 }
+                                Button {
+                                    duplicateAction(from: tag)
+                                } label: {
+                                    Label("复制", systemImage: "doc.on.doc")
+                                }
+                                .tint(.gray)
                                 Button {
                                     editingTag = tag
                                 } label: {
@@ -200,6 +211,11 @@ struct TrainingTagListView: View {
                 }
             }
         }
+        .alert("已创建副本", isPresented: $showDuplicatedAlert) {
+            Button("好", role: .cancel) { }
+        } message: {
+            Text("已复制为「\(duplicatedActionName)」")
+        }
         // Add Sheet
         .sheet(isPresented: $showAddAlert) {
             NavigationView {
@@ -270,6 +286,48 @@ struct TrainingTagListView: View {
                 let nsError = error as NSError
                 print("Unresolved error \(nsError), \(nsError.userInfo)")
             }
+        }
+    }
+    
+    private func duplicateAction(from source: TrainingTag) {
+        guard source.level == 2 else { return }
+        
+        let originalName = source.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseName = (originalName?.isEmpty == false ? originalName! : "未命名") + "副本"
+        
+        let existingNames = Set(tags.compactMap { $0.name?.trimmingCharacters(in: .whitespacesAndNewlines) })
+        var candidateName = baseName
+        var suffix = 2
+        while existingNames.contains(candidateName) {
+            candidateName = "\(baseName)\(suffix)"
+            suffix += 1
+        }
+        
+        let newAction = TrainingTag(context: viewContext)
+        newAction.id = UUID()
+        newAction.name = candidateName
+        newAction.category = source.category
+        newAction.level = 2
+        newAction.parent = source.parent
+        
+        let children = (source.children as? Set<TrainingTag> ?? [])
+            .sorted { ($0.name ?? "") < ($1.name ?? "") }
+        
+        for child in children {
+            guard child.level == 3 else { continue }
+            let newWeight = TrainingTag(context: viewContext)
+            newWeight.id = UUID()
+            newWeight.name = child.name
+            newWeight.level = 3
+            newWeight.parent = newAction
+        }
+        
+        do {
+            try viewContext.save()
+            duplicatedActionName = candidateName
+            showDuplicatedAlert = true
+        } catch {
+            print("Error duplicating action tag: \(error)")
         }
     }
 }

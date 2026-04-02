@@ -115,7 +115,8 @@ struct DietRecordListView: View {
 
     private func calorieDeficit(for record: DietRecord) -> Double {
         let totalCal = totalCalories(for: record)
-        return (bmr + record.activeEnergy) - totalCal
+        let effectiveBmr = record.restingEnergy > 0 ? record.restingEnergy : bmr
+        return (effectiveBmr + record.activeEnergy) - totalCal
     }
 }
 

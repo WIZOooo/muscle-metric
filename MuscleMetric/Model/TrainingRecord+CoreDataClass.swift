@@ -4,6 +4,10 @@ import CoreData
 @objc(TrainingRecord)
 public class TrainingRecord: NSManagedObject, Identifiable {
     @NSManaged public var id: UUID?
+    @NSManaged public var planId: String?
+    @NSManaged public var planName: String?
+    @NSManaged public var planDayId: String?
+    @NSManaged public var planDayTitle: String?
     @NSManaged public var timestamp: Date?
     @NSManaged public var title: String?
     @NSManaged public var gymTag: TrainingTag?
